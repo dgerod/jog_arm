@@ -1,5 +1,4 @@
-# This package is now part of MoveIt. This repo is deprecated.
+# Jog Arm
 
-See https://github.com/ros-planning/moveit/tree/master/moveit_experimental/jog_arm
+This only works on ROS Kinetic. This functionality was added in [MoveIt!](https://github.com/ros-planning/moveit) for newest versions of ROS.
 
-The best way to get the most recent version is to download or clone https://github.com/ros-planning/moveit, then copy/paste moveit_experimental into your catkin workspace.
