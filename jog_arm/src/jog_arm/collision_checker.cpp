@@ -40,116 +40,114 @@
 #include <jog_arm/collision_checker.h>
 
 #include <memory>
-#include <moveit/planning_scene_interface/planning_scene_interface.h>
-#include <moveit/move_group_interface/move_group_interface.h>
-#include <moveit/planning_scene/planning_scene.h>
-#include <jog_arm/low_pass_filter.h>
+//#include <moveit/move_group_interface/move_group_interface.h>
+//#include <moveit/planning_scene_interface/planning_scene_interface.h>
+#include <moveit/robot_model_loader/robot_model_loader.h>
+#include <moveit/planning_scene_monitor/planning_scene_monitor.h>
+//#include <jog_arm/low_pass_filter.h>
 
 using namespace jog_arm;
 
-CollisionCheckThread::CollisionCheckThread(const std::string& name,
-    const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-    const std::unique_ptr<robot_model_loader::RobotModelLoader>& model_loader_ptr)
-    : node_name_(name)
+namespace {
+
+void wait_until_ready(const std::string& log_name, const std::string& joint_state_topic,
+                      robot_model_loader::RobotModelLoaderPtr& model_loader)
 {
-  // If user specified true in yaml file
-  if (parameters.collision_check)
-  {
-    // MoveIt Setup
-    // Wait for model_loader_ptr to be non-null.
-    while (ros::ok() && !model_loader_ptr)
+   while (ros::ok() && !model_loader)
     {
-      ROS_WARN_THROTTLE_NAMED(5, node_name_, "Waiting for a non-null robot_model_loader pointer");
+      ROS_WARN_THROTTLE_NAMED(5, log_name, "Waiting for a non-null robot_model_loader pointer");
       ros::Duration(0.1).sleep();
     }
-    const robot_model::RobotModelPtr& kinematic_model = model_loader_ptr->getModel();
+
+    ROS_INFO_NAMED(log_name, "[CollisionCheckThread::CollisionCheckThread] Waiting for first joint msg.");
+    ros::topic::waitForMessage<sensor_msgs::JointState>(joint_state_topic);
+    ROS_INFO_NAMED(log_name, "[CollisionCheckThread::CollisionCheckThread] Received first joint msg.");
+}
+
+}
+
+CollisionCheckThread::CollisionCheckThread(const std::string& log_name,
+    const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
+    robot_model_loader::RobotModelLoaderPtr& model_loader)
+    : log_name_(log_name)
+{
+    ROS_INFO_NAMED(log_name_, "[CollisionCheckThread::CollisionCheckThread] Start collision checker? %d",
+                   parameters.check_collisions);
+
+    const std::string PLANNING_SCENE_TOPIC("/planning_scene");
+
+    if (not parameters.check_collisions)
+    {
+        ROS_WARN_NAMED(log_name_, "Collision checker is disabled");
+        return;
+    }
+
+    wait_until_ready(log_name_, parameters.joint_topic, model_loader);
+
+    const robot_model::RobotModelPtr& kinematic_model = model_loader->getModel();
     planning_scene::PlanningScene planning_scene(kinematic_model);
     collision_detection::CollisionRequest collision_request;
     collision_request.group_name = parameters.move_group_name;
     collision_request.distance = true;
     collision_detection::CollisionResult collision_result;
     robot_state::RobotState& current_state = planning_scene.getCurrentStateNonConst();
-    moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
 
-    // Wait for initial messages
-    ROS_INFO_NAMED(name, "[CollisionCheckThread::CollisionCheckThread] Waiting for first joint msg.");
-    ros::topic::waitForMessage<sensor_msgs::JointState>(parameters.joint_topic);
-    ROS_INFO_NAMED(name, "[CollisionCheckThread::CollisionCheckThread] Received first joint msg.");
+    planning_scene_monitor::PlanningSceneMonitorPtr planning_scene_monitor;
+    planning_scene_monitor.reset(new planning_scene_monitor::PlanningSceneMonitor(model_loader));
+    planning_scene_monitor->startSceneMonitor();
+    planning_scene_monitor->startStateMonitor();
 
-    ROS_INFO_NAMED(name, "[CollisionCheckThread::CollisionCheckThread] Waiting for first command msg.");
-    ros::topic::waitForMessage<geometry_msgs::TwistStamped>(parameters.cartesian_command_in_topic);
-    ROS_INFO_NAMED(name, "[CollisionCheckThread::CollisionCheckThread] Received first command msg.");
+    if (planning_scene_monitor->getPlanningScene())
+    {
+      planning_scene_monitor->startSceneMonitor(PLANNING_SCENE_TOPIC);
+      planning_scene_monitor->startWorldGeometryMonitor();
+      planning_scene_monitor->startStateMonitor();
+    }
+    else
+    {
+      ROS_ERROR_STREAM_NAMED(log_name_, "Error in setting up the PlanningSceneMonitor.");
+      exit(EXIT_FAILURE);
+    }
 
-    // A very low cutoff frequency
-    jog_arm::LowPassFilter velocity_scale_filter(20);
-    // Assume no scaling, initially
-    velocity_scale_filter.reset(1);
+    double velocity_scale_coefficient = -log(0.001) / parameters.collision_proximity_threshold;
     ros::Rate collision_rate(parameters.collision_check_rate);
 
-    /////////////////////////////////////////////////
-    // Spin while checking collisions
-    /////////////////////////////////////////////////
     while (ros::ok())
     {
-      sensor_msgs::JointState jts = shared_variables.joints;
+        pthread_mutex_lock(&shared_variables.mutex);
+        sensor_msgs::JointState jts = shared_variables.joints;
+        pthread_mutex_unlock(&shared_variables.mutex);
 
-      for (std::size_t i = 0; i < jts.position.size(); ++i)
-      {
-        current_state.setJointPositions(jts.name[i], &jts.position[i]);
-      }
+        for (std::size_t i = 0; i < jts.position.size(); ++i)
+        {
+            current_state.setJointPositions(jts.name[i], &jts.position[i]);
+        }
 
-      // process collision objects in scene
-      std::map<std::string, moveit_msgs::CollisionObject> c_objects_map = planning_scene_interface.getObjects();
-      for (auto& kv : c_objects_map)
-      {
-        planning_scene.processCollisionObjectMsg(kv.second);
-      }
+        collision_result.clear();
+        planning_scene_monitor->getPlanningScene()->checkCollision(collision_request, collision_result, current_state);
 
-      ROS_INFO("[CollisionCheckThread::CollisionCheckThread] 3");
-      collision_result.clear();
+        // Scale robot velocity according to collision proximity and user-defined thresholds.
+        // I scaled exponentially (cubic power) so velocity drops off quickly after the threshold.
+        // Proximity decreasing --> decelerate
+        double velocity_scale = 1;
 
-      // TBD: Crashing when collision check enabled
-      ROS_INFO("[CollisionCheckThread::CollisionCheckThread] 4");
-      planning_scene.checkCollision(collision_request, collision_result);
+        // If we are far from a collision, velocity_scale should be 1.
+        // If we are very close to a collision, velocity_scale should be ~zero.
+        // When collision_proximity_threshold is breached, start decelerating exponentially.
+        if (collision_result.distance < parameters.collision_proximity_threshold)
+        {
+            // velocity_scale = e ^ k * (collision_distance - threshold)
+            // k = - ln(0.001) / collision_proximity_threshold
+            // velocity_scale should equal one when collision_distance is at collision_proximity_threshold.
+            // velocity_scale should equal 0.001 when collision_distance is at zero.
+            velocity_scale =
+                 exp(velocity_scale_coefficient * (collision_result.distance - parameters.collision_proximity_threshold));
+        }
 
-      ROS_INFO("[CollisionCheckThread::CollisionCheckThread]  5");
+        pthread_mutex_lock(&shared_variables.mutex);
+        shared_variables.collision_velocity_scale = velocity_scale;
+        pthread_mutex_unlock(&shared_variables.mutex);
 
-      // Scale robot velocity according to collision proximity and user-defined
-      // thresholds.
-      // I scaled exponentially (cubic power) so velocity drops off quickly
-      // after the threshold.
-      // Proximity decreasing --> decelerate
-      double velocity_scale = 1;
-
-      // Ramp velocity down linearly when collision proximity is between
-      // lower_collision_proximity_threshold and
-      // hard_stop_collision_proximity_threshold
-      if ((collision_result.distance > parameters.hard_stop_collision_proximity_threshold) &&
-          (collision_result.distance < parameters.lower_collision_proximity_threshold))
-      {
-        // scale = k*(proximity-hard_stop_threshold)^3
-        velocity_scale =
-            64000. * pow(collision_result.distance - parameters.hard_stop_collision_proximity_threshold, 3);
-      }
-      //else if (collision_result.distance < parameters.hard_stop_collision_proximity_threshold)
-      //  velocity_scale = 0;
-
-      velocity_scale = velocity_scale_filter.filter(velocity_scale);
-      // Put a ceiling and a floor on velocity_scale
-      if (velocity_scale > 1)
-        velocity_scale = 1;
-      else if (velocity_scale < 0.05)
-        velocity_scale = 0.05;
-
-      // Very slow if actually in collision
-      if (collision_result.collision)
-        velocity_scale = 0.02;
-
-      pthread_mutex_lock(&shared_variables.collision_velocity_scale_mutex);
-      shared_variables.collision_velocity_scale = velocity_scale;
-      pthread_mutex_unlock(&shared_variables.collision_velocity_scale_mutex);
-
-      collision_rate.sleep();
+        collision_rate.sleep();
     }
-  }
 }

@@ -37,8 +37,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef JOG_ARM_COLLISION_CHECKER_H
-#define JOG_ARM_COLLISION_CHECKER_H
+#pragma once
 
 #include <moveit/robot_model_loader/robot_model_loader.h>
 #include <jog_arm/jog_parameters.h>
@@ -52,12 +51,10 @@ class CollisionCheckThread
 public:
     CollisionCheckThread(const std::string& name,
         const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-        const std::unique_ptr<robot_model_loader::RobotModelLoader>& model_loader_ptr);
+        robot_model_loader::RobotModelLoaderPtr& model_loader_ptr);
 
 private:
-    const std::string node_name_;
+    const std::string log_name_;
 };
 
 }
-
-#endif
