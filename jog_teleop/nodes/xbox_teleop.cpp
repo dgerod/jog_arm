@@ -1,10 +1,11 @@
-#include "geometry_msgs/TwistStamped.h"
-#include "jog_msgs/JogJoint.h"
 #include "ros/ros.h"
+#include "geometry_msgs/TwistStamped.h"
 #include "sensor_msgs/Joy.h"
+#include "jog_msgs/JogJoint.h"
 
 namespace to_twist
 {
+
 class xboxToTwist
 {
 public:
@@ -53,11 +54,12 @@ private:
     joint_delta_pub_.publish(joint_deltas);
   }
 };
-}  // end to_twist namespace
+
+}
 
 int main(int argc, char** argv)
 {
-  ros::init(argc, argv, "xbox_to_twist");
+  ros::init(argc, argv, "xbox_teleop");
 
   to_twist::xboxToTwist to_twist;
 

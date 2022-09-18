@@ -1,10 +1,11 @@
-#include "geometry_msgs/TwistStamped.h"
-#include "jog_msgs/JogJoint.h"
 #include "ros/ros.h"
+#include "geometry_msgs/TwistStamped.h"
 #include "sensor_msgs/Joy.h"
+#include "jog_msgs/JogJoint.h"
 
 namespace to_twist
 {
+
 class spaceNavToTwist
 {
 public:
@@ -54,11 +55,12 @@ private:
     joint_delta_pub_.publish(joint_deltas);
   }
 };
-}  // end to_twist namespace
+
+}
 
 int main(int argc, char** argv)
 {
-  ros::init(argc, argv, "spacenav_to_twist");
+  ros::init(argc, argv, "spacenav_teleop");
 
   to_twist::spaceNavToTwist to_twist;
 
