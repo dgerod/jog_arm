@@ -8,6 +8,11 @@
   <license>BSD</license>
 
   <buildtool_depend>catkin</buildtool_depend>
-  <exec_depend>rospy</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
+  <depend>cmake_modules</depend>
+  <depend>roscpp</depend>
+  <depend>rospy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>jog_msgs</depend>
+  <depend>joy</depend>
+
 </package>
