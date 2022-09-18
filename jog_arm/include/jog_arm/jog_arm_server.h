@@ -37,8 +37,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef JOG_ARM_SERVER_H
-#define JOG_ARM_SERVER_H
+#pragma once
 
 #include <Eigen/Eigenvalues>
 #include <jog_msgs/JogJoint.h>
@@ -66,24 +65,22 @@ namespace jog_arm
 class JogROSInterface
 {
 public:
-  JogROSInterface(const std::string& name);
+    JogROSInterface(const std::string& name);
 
 private:
-  void deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg);
-  void deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg);
-  void jointsCB(const sensor_msgs::JointStateConstPtr& msg);
+    void deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg);
+    void deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg);
+    void jointsCB(const sensor_msgs::JointStateConstPtr& msg);
 
-  bool readParameters(ros::NodeHandle& n);
+    bool readParameters(ros::NodeHandle& n);
 
-  static void* jogCalcThread(void* thread_id);
-  static void* CollisionCheckThread(void* thread_id);
+    static void* jogCalculatorThread(void* params);
+    static void* collisionCheckerThread(void* params);
 
-  static std::string node_name_;
-  static struct jog_arm_parameters ros_parameters_;
-  static struct jog_arm_shared shared_variables_;
-  static std::unique_ptr<robot_model_loader::RobotModelLoader> model_loader_ptr_;
+    std::string node_name_;
+    struct jog_arm_parameters ros_parameters_;
+    struct jog_arm_shared shared_variables_;
+    robot_model_loader::RobotModelLoaderPtr model_loader_ptr_;
 };
 
 }
-
-#endif
