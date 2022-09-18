@@ -39,8 +39,7 @@
 
 // Server node for arm jogging with MoveIt.
 
-#ifndef JOG_ARM_JOG_CACULATOR_H
-#define JOG_ARM_JOG_CACULATOR_H
+#pragma once
 
 #include <Eigen/Eigenvalues>
 #include <ros/ros.h>
@@ -71,7 +70,7 @@ class JogCalcs
 {
 public:
   JogCalcs(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-           const std::unique_ptr<robot_model_loader::RobotModelLoader>& model_loader_ptr);
+           robot_model_loader::RobotModelLoaderPtr& model_loader_ptr);
 
 protected:
   bool cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm_shared& shared_variables);
@@ -106,7 +105,7 @@ protected:
   void insertRedundantPointsIntoTrajectory(trajectory_msgs::JointTrajectory& trajectory, int count) const;
   const robot_state::JointModelGroup* joint_model_group_;
 
-  const std::string node_name_;
+  const std::string log_name_;
   ros::NodeHandle nh_;
   moveit::planning_interface::MoveGroupInterface move_group_;
   sensor_msgs::JointState incoming_jts_;
@@ -122,5 +121,3 @@ protected:
 };
 
 }
-
-#endif

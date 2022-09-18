@@ -3,30 +3,40 @@
 
 using namespace jog_arm;
 
+namespace {
+
 static const int GAZEBO_REDUNTANT_MESSAGE_COUNT = 30;
 
+void wait_until_ready(const std::string& log_name, const std::string& joint_state_topic,
+                      robot_model_loader::RobotModelLoaderPtr& model_loader)
+{
+   while (ros::ok() && !model_loader)
+    {
+      ROS_WARN_THROTTLE_NAMED(5, log_name, "Waiting for a non-null robot_model_loader pointer");
+      ros::Duration(0.1).sleep();
+    }
+
+    ROS_INFO_NAMED(log_name, "[CollisionCheckThread::CollisionCheckThread] Waiting for first joint msg.");
+    ros::topic::waitForMessage<sensor_msgs::JointState>(joint_state_topic);
+    ROS_INFO_NAMED(log_name, "[CollisionCheckThread::CollisionCheckThread] Received first joint msg.");
+}
+
+}
+
 JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-                   const std::unique_ptr<robot_model_loader::RobotModelLoader>& model_loader_ptr)
+                   robot_model_loader::RobotModelLoaderPtr& model_loader)
   : move_group_(parameters.move_group_name)
-  , node_name_(name)
+  , log_name_(name)
   , parameters_(parameters)
 {
-  ROS_INFO("[JogCalcs::JogCalcs] BEGIN");
+  ROS_INFO_NAMED(log_name_, "[JogCalcs::JogCalcs] BEGIN");
+
+  wait_until_ready(log_name_, parameters.joint_topic, model_loader);
 
   // Publish collision status
   warning_pub_ = nh_.advertise<std_msgs::Bool>(parameters_.warning_topic, 1);
 
-  // MoveIt Setup
-  // Wait for model_loader_ptr to be non-null.
-  while (ros::ok() && !model_loader_ptr)
-  {
-    ROS_WARN_THROTTLE_NAMED(5, node_name_, "Waiting for a non-null robot_model_loader pointer");
-    ros::Duration(0.1).sleep();
-  }
-
-  ROS_INFO("[JogCalcs::JogCalcs] Model loaded");
-
-  const robot_model::RobotModelPtr& kinematic_model = model_loader_ptr->getModel();
+  const robot_model::RobotModelPtr& kinematic_model = model_loader->getModel();
   kinematic_state_ = std::make_shared<robot_state::RobotState>(kinematic_model);
   kinematic_state_->setToDefaultValues();
 
@@ -34,15 +44,6 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
 
   std::vector<double> dummy_joint_values;
   kinematic_state_->copyJointGroupPositions(joint_model_group_, dummy_joint_values);
-
-  // Wait for initial messages
-  ROS_INFO_NAMED(node_name_, "[JogCalcs::JogCalcs] Waiting for first joint msg.");
-  ros::topic::waitForMessage<sensor_msgs::JointState>(parameters_.joint_topic);
-  ROS_INFO_NAMED(node_name_, "[JogCalcs::JogCalcs] Received first joint msg.");
-
-  ROS_INFO_NAMED(node_name_, "[JogCalcs::JogCalcs] Waiting for first command msg.");
-  ros::topic::waitForMessage<geometry_msgs::TwistStamped>(parameters_.cartesian_command_in_topic);
-  ROS_INFO_NAMED(node_name_, "[JogCalcs::JogCalcs] Received first command msg.");
 
   resetVelocityFilters();
 
@@ -61,7 +62,9 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
   // Initialize the position filters to initial robot joints
   while (!updateJoints() && ros::ok())
   {
+    pthread_mutex_lock(&shared_variables.mutex);
     incoming_jts_ = shared_variables.joints;
+    pthread_mutex_unlock(&shared_variables.mutex);
     ros::Duration(0.001).sleep();
   }
   for (std::size_t i = 0; i < jt_state_.name.size(); ++i)
@@ -81,12 +84,16 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
   {
     ros::Duration(0.05).sleep();
 
+    pthread_mutex_lock(&shared_variables.mutex);
     cartesian_deltas = shared_variables.command_deltas;
     joint_deltas = shared_variables.joint_command_deltas;
+    pthread_mutex_unlock(&shared_variables.mutex);
 
     //ROS_INFO("[JogCalcs::JogCalcs] time: %s", ros::Time(0.));
     //ROS_INFO("[JogCalcs::JogCalcs] cartesian_deltas" << cartesian_deltas);
     //ROS_INFO("[JogCalcs::JogCalcs] joint_deltas" << joint_deltas);
+
+    ROS_INFO("[JogCalcs::JogCalcs] Wait.");
   }
 
   // Track the number of cycles during which motion has not occurred.
@@ -103,20 +110,27 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
 
     // If user commands are all zero, reset the low-pass filters
     // when commands resume
+    pthread_mutex_lock(&shared_variables.mutex);
     bool zero_cartesian_traj_flag = shared_variables.zero_cartesian_cmd_flag;
     bool zero_joint_traj_flag = shared_variables.zero_joint_cmd_flag;
+    pthread_mutex_unlock(&shared_variables.mutex);
 
     if (zero_cartesian_traj_flag && zero_joint_traj_flag)
-      // Reset low-pass filters
-      resetVelocityFilters();
+    {
+        resetVelocityFilters();
+    }
 
     // Pull data from the shared variables.
+    pthread_mutex_lock(&shared_variables.mutex);
     incoming_jts_ = shared_variables.joints;
+    pthread_mutex_unlock(&shared_variables.mutex);
 
     // Initialize the position filters to initial robot joints
     while (!updateJoints() && ros::ok())
     {
+      pthread_mutex_lock(&shared_variables.mutex);
       incoming_jts_ = shared_variables.joints;
+      pthread_mutex_unlock(&shared_variables.mutex);
       ros::Duration(0.001).sleep();
     }
 
@@ -127,8 +141,7 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
       cartesian_deltas = shared_variables.command_deltas;
       //ROS_INFO("Cartesian deltas: " << cartesian_deltas);
 
-      if (!cartesianJogCalcs(cartesian_deltas, shared_variables))
-        continue;
+      if (!cartesianJogCalcs(cartesian_deltas, shared_variables)) { continue; }
     }
     // If there have not been several consecutive cycles of all zeros and joint
     // jogging commands are not empty
@@ -137,8 +150,7 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
       joint_deltas = shared_variables.joint_command_deltas;
       //ROS_INFO("Joint deltas: " << joint_deltas);
 
-      if (!jointJogCalcs(joint_deltas, shared_variables))
-        continue;
+      if (!jointJogCalcs(joint_deltas, shared_variables)) { continue; }
     }
 
     ROS_INFO("[JogCalcs::JogCalcs] Command stale: %d", shared_variables.command_is_stale);
@@ -168,20 +180,18 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
       // If everything normal, share the new traj to be published
       if (valid_nonzero_trajectory)
       {
-        pthread_mutex_lock(&shared_variables.new_traj_mutex);
-        pthread_mutex_lock(&shared_variables.ok_to_publish_mutex);
+        pthread_mutex_lock(&shared_variables.mutex);
         shared_variables.new_traj = new_traj_;
         shared_variables.ok_to_publish = true;
-        pthread_mutex_unlock(&shared_variables.new_traj_mutex);
-        pthread_mutex_unlock(&shared_variables.ok_to_publish_mutex);
+        pthread_mutex_unlock(&shared_variables.mutex);
       }
       // Skip the jogging publication if all inputs have been zero for several
       // cycles in a row
       else if (zero_velocity_count > num_zero_cycles_to_publish)
       {
-        pthread_mutex_lock(&shared_variables.ok_to_publish_mutex);
+        pthread_mutex_lock(&shared_variables.mutex);
         shared_variables.ok_to_publish = false;
-        pthread_mutex_unlock(&shared_variables.ok_to_publish_mutex);
+        pthread_mutex_unlock(&shared_variables.mutex);
       }
 
       ROS_INFO("[JogCalcs::JogCalcs] Zero ok_to_publish: %d", shared_variables.ok_to_publish);
@@ -208,8 +218,8 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
   if (std::isnan(cmd.twist.linear.x) || std::isnan(cmd.twist.linear.y) || std::isnan(cmd.twist.linear.z) ||
       std::isnan(cmd.twist.angular.x) || std::isnan(cmd.twist.angular.y) || std::isnan(cmd.twist.angular.z))
   {
-    ROS_WARN_STREAM_NAMED(node_name_, "nan in incoming command. Skipping this datapoint.");
-    return 0;
+    ROS_WARN_STREAM_NAMED(log_name_, "nan in incoming command. Skipping this datapoint.");
+    return false;
   }
 
   // If incoming commands should be in the range [-1:1], check for |delta|>1
@@ -218,8 +228,8 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
     if ((fabs(cmd.twist.linear.x) > 1) || (fabs(cmd.twist.linear.y) > 1) || (fabs(cmd.twist.linear.z) > 1) ||
         (fabs(cmd.twist.angular.x) > 1) || (fabs(cmd.twist.angular.y) > 1) || (fabs(cmd.twist.angular.z) > 1))
     {
-      ROS_WARN_STREAM_NAMED(node_name_, "Component of incoming command is >1. Skipping this datapoint.");
-      return 0;
+      ROS_WARN_STREAM_NAMED(log_name_, "Component of incoming command is >1. Skipping this datapoint.");
+      return false;
     }
   }
 
@@ -231,7 +241,7 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
   }
   catch (const tf::TransformException& ex)
   {
-    ROS_ERROR_STREAM_NAMED(node_name_, ros::this_node::getName() << ": " << ex.what());
+    ROS_ERROR_STREAM_NAMED(log_name_, ros::this_node::getName() << ": " << ex.what());
     return 0;
   }
 
@@ -249,7 +259,7 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
   }
   catch (const tf::TransformException& ex)
   {
-    ROS_ERROR_STREAM_NAMED(node_name_, ros::this_node::getName() << ": " << ex.what());
+    ROS_ERROR_STREAM_NAMED(log_name_, ros::this_node::getName() << ": " << ex.what());
     return 0;
   }
 
@@ -264,7 +274,7 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
   }
   catch (const tf::TransformException& ex)
   {
-    ROS_ERROR_STREAM_NAMED(node_name_, ros::this_node::getName() << ": " << ex.what());
+    ROS_ERROR_STREAM_NAMED(log_name_, ros::this_node::getName() << ": " << ex.what());
     return 0;
   }
 
@@ -311,16 +321,18 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
     publishWarning(true);
   }
   else
+  {
     publishWarning(false);
+  }
 
   // If using Gazebo simulator, insert redundant points
-  if (parameters_.gazebo)
+  if (parameters_.use_gazebo)
   {
     insertRedundantPointsIntoTrajectory(new_traj_, GAZEBO_REDUNTANT_MESSAGE_COUNT);
   }
 
   ROS_INFO("[JogCalcs::cartesianJogCalcs] END");
-  return 1;
+  return true;
 }
 
 bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shared_variables)
@@ -332,8 +344,8 @@ bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shar
   {
     if (std::isnan(cmd.deltas[i]) || (fabs(cmd.deltas[i]) > 1))
     {
-      ROS_WARN_STREAM_NAMED(node_name_, "nan in incoming command. Skipping this datapoint.");
-      return 0;
+      ROS_WARN_STREAM_NAMED(log_name_, "nan in incoming command. Skipping this datapoint.");
+      return false;
     }
   }
 
@@ -344,7 +356,9 @@ bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shar
   original_jts_ = jt_state_;
 
   if (!addJointIncrements(jt_state_, delta))
-    return 0;
+  {
+    return false;
+  }
 
   // Include a velocity estimate for velocity-controlled robots
   Eigen::VectorXd joint_vel(delta / parameters_.publish_period);
@@ -370,13 +384,13 @@ bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shar
   }
 
   // done with calculations
-  if (parameters_.gazebo)
+  if (parameters_.use_gazebo)
   {
     insertRedundantPointsIntoTrajectory(new_traj_, GAZEBO_REDUNTANT_MESSAGE_COUNT);
   }
 
   ROS_INFO("[JogCalcs::jointJogCalcs] END");
-  return 1;
+  return true;
 }
 
 // Spam several redundant points into the trajectory. The first few may be
@@ -423,7 +437,7 @@ void JogCalcs::lowPassFilterVelocities(const Eigen::VectorXd& joint_vel)
     {
       jt_state_.position[i] = original_jts_.position[i];
       jt_state_.velocity[i] = 0.;
-      ROS_WARN_STREAM_NAMED(node_name_, "nan in velocity filter");
+      ROS_WARN_STREAM_NAMED(log_name_, "nan in velocity filter");
     }
   }
 }
@@ -566,7 +580,7 @@ double JogCalcs::decelerateForSingularity(Eigen::MatrixXd jacobian, const Eigen:
     else if (ini_condition > parameters_.hard_stop_singularity_threshold)
     {
       velocity_scale = 0;
-      ROS_WARN_NAMED(node_name_, "Close to a singularity. Halting.");
+      ROS_WARN_NAMED(log_name_, "Close to a singularity. Halting.");
     }
   }
 
@@ -580,7 +594,7 @@ bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_j
   {
     if (!kinematic_state_->satisfiesVelocityBounds(joint))
     {
-      ROS_WARN_STREAM_THROTTLE_NAMED(2, node_name_, ros::this_node::getName() << " " << joint->getName() << " "
+      ROS_WARN_STREAM_THROTTLE_NAMED(2, log_name_, ros::this_node::getName() << " " << joint->getName() << " "
                                                                              << " close to a "
                                                                                 " velocity limit. Enforcing limit.");
       kinematic_state_->enforceVelocityBounds(joint);
@@ -619,7 +633,7 @@ bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_j
             (kinematic_state_->getJointVelocities(joint)[0] > 0 &&
              (joint_angle > (limits[0].max_position - parameters_.joint_limit_margin))))
         {
-          ROS_WARN_STREAM_THROTTLE_NAMED(2, node_name_, ros::this_node::getName() << " " << joint->getName()
+          ROS_WARN_STREAM_THROTTLE_NAMED(2, log_name_, ros::this_node::getName() << " " << joint->getName()
                                                                                   << " close to a "
                                                                                      " position limit. Halting.");
           halting = true;
@@ -719,7 +733,7 @@ Eigen::VectorXd JogCalcs::scaleCartesianCommand(const geometry_msgs::TwistStampe
     result[5] = command.twist.angular.z * parameters_.publish_period;
   }
   else
-    ROS_ERROR_STREAM_NAMED(node_name_, "Unexpected command_in_type");
+    ROS_ERROR_STREAM_NAMED(log_name_, "Unexpected command_in_type");
 
   return result;
 }
@@ -747,7 +761,7 @@ Eigen::VectorXd JogCalcs::scaleJointCommand(const jog_msgs::JogJoint& command) c
         else if (parameters_.command_in_type == "speed_units")
           result[c] = command.deltas[m] * parameters_.publish_period;
         else
-          ROS_ERROR_STREAM_NAMED(node_name_, "Unexpected command_in_type");
+          ROS_ERROR_STREAM_NAMED(log_name_, "Unexpected command_in_type");
         goto NEXT_JOINT;
       }
     }
@@ -779,7 +793,7 @@ bool JogCalcs::addJointIncrements(sensor_msgs::JointState& output, const Eigen::
     }
     catch (const std::out_of_range& e)
     {
-      ROS_ERROR_STREAM_NAMED(node_name_, ros::this_node::getName() << " Lengths of output and "
+      ROS_ERROR_STREAM_NAMED(log_name_, ros::this_node::getName() << " Lengths of output and "
                                                                      "increments do not match.");
       return 0;
     }
