@@ -37,8 +37,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef JOG_ARM_FILTER_H
-#define JOG_ARM_FILTER_H
+#pragma once
 
 namespace jog_arm
 {
@@ -59,5 +58,3 @@ private:
 };
 
 }
-
-#endif
