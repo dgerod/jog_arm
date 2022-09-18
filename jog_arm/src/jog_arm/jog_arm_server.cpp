@@ -61,13 +61,6 @@ struct WorkerParameters
     robot_model_loader::RobotModelLoaderPtr& model_loader_;
 };
 
-// Initialize these static struct to hold ROS parameters.
-// They must be static because they are used as arguments in thread creation.
-//std::string jog_arm::JogROSInterface::node_name_ = "";
-//jog_arm::jog_arm_parameters jog_arm::JogROSInterface::ros_parameters_;
-//jog_arm::jog_arm_shared jog_arm::JogROSInterface::shared_variables_;
-//std::unique_ptr<robot_model_loader::RobotModelLoader> jog_arm::JogROSInterface::model_loader_ptr_ = NULL;
-
 /////////////////////////////////////////////////////////////////////////////////
 // JogROSInterface handles ROS subscriptions and instantiates the worker
 // threads.
@@ -82,15 +75,12 @@ JogROSInterface::JogROSInterface(const std::string& name)
   ros::NodeHandle n;
   node_name_ = name;
 
-  // Read ROS parameters, typically from YAML file
   if (!readParameters(n))
   {
     exit(EXIT_FAILURE);
   }
 
-  // Load the robot model. This is needed by the worker threads.
   model_loader_ptr_ = std::unique_ptr<robot_model_loader::RobotModelLoader>(new robot_model_loader::RobotModelLoader);
-
   WorkerParameters worker_parameters = WorkerParameters(node_name_, ros_parameters_, shared_variables_, model_loader_ptr_);
 
   pthread_t joggingThread;
@@ -347,8 +337,8 @@ void* JogROSInterface::jogCalculatorThread(void* parameters)
   ROS_INFO("JogROSInterface::jogCalcThread");
 
   WorkerParameters* worker_parameters = static_cast<WorkerParameters*>(parameters);
-  jog_arm::JogCalcs ja(worker_parameters->node_name_, worker_parameters->parameters_,
-                       worker_parameters->shared_variables_, worker_parameters->model_loader_);
+  jog_arm::JogCalculatorWorker ja(worker_parameters->node_name_, worker_parameters->parameters_,
+                                  worker_parameters->shared_variables_, worker_parameters->model_loader_);
   return nullptr;
 }
 
@@ -357,8 +347,8 @@ void* JogROSInterface::collisionCheckerThread(void* parameters)
   ROS_INFO("JogROSInterface::CollisionCheckThread");
 
   WorkerParameters* worker_parameters = static_cast<WorkerParameters*>(parameters);
-  jog_arm::CollisionCheckThread cc(worker_parameters->node_name_, worker_parameters->parameters_,
-                                   worker_parameters->shared_variables_, worker_parameters->model_loader_);
+  jog_arm::CollisionCheckerWorker cc(worker_parameters->node_name_, worker_parameters->parameters_,
+                                  worker_parameters->shared_variables_, worker_parameters->model_loader_);
   return nullptr;
 }
 

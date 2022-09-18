@@ -23,8 +23,8 @@ void wait_until_ready(const std::string& log_name, const std::string& joint_stat
 
 }
 
-JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-                   robot_model_loader::RobotModelLoaderPtr& model_loader)
+JogCalculatorWorker::JogCalculatorWorker(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
+                                         robot_model_loader::RobotModelLoaderPtr& model_loader)
   : move_group_(parameters.move_group_name)
   , log_name_(name)
   , parameters_(parameters)
@@ -209,8 +209,7 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
   }
 }
 
-// Perform the jogging calculations
-bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm_shared& shared_variables)
+bool JogCalculatorWorker::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm_shared& shared_variables)
 {
   ROS_INFO("[JogCalcs::cartesianJogCalcs] BEGIN");
 
@@ -335,7 +334,7 @@ bool JogCalcs::cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm
   return true;
 }
 
-bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shared_variables)
+bool JogCalculatorWorker::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shared_variables)
 {
   ROS_INFO("[JogCalcs::jointJogCalcs] BEGIN");
 
@@ -399,7 +398,7 @@ bool JogCalcs::jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shar
 // simulation.
 // Start from 2 because the first point's timestamp is already
 // 1*parameters_.publish_period
-void JogCalcs::insertRedundantPointsIntoTrajectory(trajectory_msgs::JointTrajectory& trajectory, int count) const
+void JogCalculatorWorker::insertRedundantPointsIntoTrajectory(trajectory_msgs::JointTrajectory& trajectory, int count) const
 {
   auto point = trajectory.points[0];
   // Start from 2 because we already have the first point. End at count+1 so
@@ -411,7 +410,7 @@ void JogCalcs::insertRedundantPointsIntoTrajectory(trajectory_msgs::JointTraject
   }
 }
 
-void JogCalcs::lowPassFilterPositions()
+void JogCalculatorWorker::lowPassFilterPositions()
 {
   for (size_t i = 0; i < jt_state_.name.size(); ++i)
   {
@@ -426,7 +425,7 @@ void JogCalcs::lowPassFilterPositions()
   }
 }
 
-void JogCalcs::lowPassFilterVelocities(const Eigen::VectorXd& joint_vel)
+void JogCalculatorWorker::lowPassFilterVelocities(const Eigen::VectorXd& joint_vel)
 {
   for (size_t i = 0; i < jt_state_.name.size(); ++i)
   {
@@ -442,8 +441,8 @@ void JogCalcs::lowPassFilterVelocities(const Eigen::VectorXd& joint_vel)
   }
 }
 
-trajectory_msgs::JointTrajectory JogCalcs::composeOutgoingMessage(sensor_msgs::JointState& joint_state,
-                                                                  const ros::Time& stamp) const
+trajectory_msgs::JointTrajectory JogCalculatorWorker::composeOutgoingMessage(sensor_msgs::JointState& joint_state,
+                                                                             const ros::Time& stamp) const
 {
   trajectory_msgs::JointTrajectory new_jt_traj;
   new_jt_traj.header.frame_id = parameters_.planning_frame;
@@ -473,8 +472,8 @@ trajectory_msgs::JointTrajectory JogCalcs::composeOutgoingMessage(sensor_msgs::J
 // Scale for collisions is read from a shared variable.
 // Key equation: new_velocity =
 // collision_scale*singularity_scale*previous_velocity
-bool JogCalcs::applyVelocityScaling(jog_arm_shared& shared_variables, trajectory_msgs::JointTrajectory& new_jt_traj,
-                                    const Eigen::VectorXd& delta_theta, double singularity_scale)
+bool JogCalculatorWorker::applyVelocityScaling(jog_arm_shared& shared_variables, trajectory_msgs::JointTrajectory& new_jt_traj,
+                                               const Eigen::VectorXd& delta_theta, double singularity_scale)
 {
   double collision_scale = shared_variables.collision_velocity_scale;
 
@@ -496,7 +495,7 @@ bool JogCalcs::applyVelocityScaling(jog_arm_shared& shared_variables, trajectory
 }
 
 
-void JogCalcs::enforceJointVelocityLimits(Eigen::VectorXd& calculated_joint_vel)
+void JogCalculatorWorker::enforceJointVelocityLimits(Eigen::VectorXd& calculated_joint_vel)
 {
   double maximum_joint_vel = calculated_joint_vel.cwiseAbs().maxCoeff();
   if(maximum_joint_vel > parameters_.joint_scale)
@@ -508,7 +507,7 @@ void JogCalcs::enforceJointVelocityLimits(Eigen::VectorXd& calculated_joint_vel)
 
 // Possibly calculate a velocity scaling factor, due to proximity of singularity
 // and direction of motion
-double JogCalcs::decelerateForSingularity(Eigen::MatrixXd jacobian, const Eigen::VectorXd commanded_velocity)
+double JogCalculatorWorker::decelerateForSingularity(Eigen::MatrixXd jacobian, const Eigen::VectorXd commanded_velocity)
 {
   double velocity_scale = 1;
 
@@ -587,7 +586,7 @@ double JogCalcs::decelerateForSingularity(Eigen::MatrixXd jacobian, const Eigen:
   return velocity_scale;
 }
 
-bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_jt_traj)
+bool JogCalculatorWorker::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_jt_traj)
 {
   bool halting = false;
   for (auto joint : joint_model_group_->getJointModels())
@@ -645,7 +644,7 @@ bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_j
   return !halting;
 }
 
-void JogCalcs::publishWarning(const bool active) const
+void JogCalculatorWorker::publishWarning(const bool active) const
 {
   std_msgs::Bool status;
   status.data = static_cast<std_msgs::Bool::_data_type>(active);
@@ -654,7 +653,7 @@ void JogCalcs::publishWarning(const bool active) const
 
 // Avoid a singularity or other issue.
 // Needs to be handled differently for position vs. velocity control
-void JogCalcs::halt(trajectory_msgs::JointTrajectory& jt_traj)
+void JogCalculatorWorker::halt(trajectory_msgs::JointTrajectory& jt_traj)
 {
   for (std::size_t i = 0; i < jt_state_.velocity.size(); ++i)
   {
@@ -671,14 +670,14 @@ void JogCalcs::halt(trajectory_msgs::JointTrajectory& jt_traj)
 
 // Reset the data stored in filters so the trajectory won't jump when jogging is
 // resumed.
-void JogCalcs::resetVelocityFilters()
+void JogCalculatorWorker::resetVelocityFilters()
 {
   for (std::size_t i = 0; i < jt_state_.name.size(); ++i)
     velocity_filters_[i].reset(0);  // Zero velocity
 }
 
 // Parse the incoming joint msg for the joints of our MoveGroup
-bool JogCalcs::updateJoints()
+bool JogCalculatorWorker::updateJoints()
 {
   // Check if every joint was zero. Sometimes an issue.
   bool all_zeros = true;
@@ -707,8 +706,7 @@ bool JogCalcs::updateJoints()
   return !all_zeros;
 }
 
-// Scale the incoming jog command
-Eigen::VectorXd JogCalcs::scaleCartesianCommand(const geometry_msgs::TwistStamped& command) const
+Eigen::VectorXd JogCalculatorWorker::scaleCartesianCommand(const geometry_msgs::TwistStamped& command) const
 {
   Eigen::VectorXd result(6);
 
@@ -738,7 +736,7 @@ Eigen::VectorXd JogCalcs::scaleCartesianCommand(const geometry_msgs::TwistStampe
   return result;
 }
 
-Eigen::VectorXd JogCalcs::scaleJointCommand(const jog_msgs::JogJoint& command) const
+Eigen::VectorXd JogCalculatorWorker::scaleJointCommand(const jog_msgs::JogJoint& command) const
 {
   Eigen::VectorXd result(jt_state_.name.size());
 
@@ -771,19 +769,18 @@ Eigen::VectorXd JogCalcs::scaleJointCommand(const jog_msgs::JogJoint& command) c
   return result;
 }
 
-// Calculate a pseudo-inverse.
-Eigen::MatrixXd JogCalcs::pseudoInverse(const Eigen::MatrixXd& J) const
+Eigen::MatrixXd JogCalculatorWorker::pseudoInverse(const Eigen::MatrixXd& J) const
 {
   return J.transpose() * (J * J.transpose()).inverse();
 }
 
-Eigen::MatrixXd JogCalcs::pseudoInverse(const Eigen::MatrixXd& u_matrix, const Eigen::MatrixXd& v_matrix, const Eigen::MatrixXd& s_diagonals) const
+Eigen::MatrixXd JogCalculatorWorker::pseudoInverse(const Eigen::MatrixXd& u_matrix,
+                                                   const Eigen::MatrixXd& v_matrix, const Eigen::MatrixXd& s_diagonals) const
 {
   return v_matrix * s_diagonals.inverse() * u_matrix.transpose();
 }
 
-// Add the deltas to each joint
-bool JogCalcs::addJointIncrements(sensor_msgs::JointState& output, const Eigen::VectorXd& increments) const
+bool JogCalculatorWorker::addJointIncrements(sensor_msgs::JointState& output, const Eigen::VectorXd& increments) const
 {
   for (std::size_t i = 0, size = static_cast<std::size_t>(increments.size()); i < size; ++i)
   {

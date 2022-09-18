@@ -66,13 +66,13 @@ namespace jog_arm
 /**
  * Class JogCalcs - Perform the Jacobian calculations.
  */
-class JogCalcs
+class JogCalculatorWorker
 {
 public:
-  JogCalcs(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
-           robot_model_loader::RobotModelLoaderPtr& model_loader_ptr);
+  JogCalculatorWorker(const std::string& name, const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
+                      robot_model_loader::RobotModelLoaderPtr& model_loader_ptr);
 
-protected:
+private:
   bool cartesianJogCalcs(const geometry_msgs::TwistStamped& cmd, jog_arm_shared& shared_variables);
   bool jointJogCalcs(const jog_msgs::JogJoint& cmd, jog_arm_shared& shared_variables);
   // Parse the incoming joint msg for the joints of our MoveGroup

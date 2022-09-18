@@ -46,10 +46,10 @@
 namespace jog_arm
 {
 
-class CollisionCheckThread
+class CollisionCheckerWorker
 {
 public:
-    CollisionCheckThread(const std::string& name,
+    CollisionCheckerWorker(const std::string& name,
         const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
         robot_model_loader::RobotModelLoaderPtr& model_loader_ptr);
 

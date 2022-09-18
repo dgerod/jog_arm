@@ -66,7 +66,7 @@ void wait_until_ready(const std::string& log_name, const std::string& joint_stat
 
 }
 
-CollisionCheckThread::CollisionCheckThread(const std::string& log_name,
+CollisionCheckerWorker::CollisionCheckerWorker(const std::string& log_name,
     const jog_arm_parameters& parameters, jog_arm_shared& shared_variables,
     robot_model_loader::RobotModelLoaderPtr& model_loader)
     : log_name_(log_name)
