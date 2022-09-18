@@ -31,7 +31,7 @@ include_directories(
   ${Eigen_INCLUDE_DIRS}
 )
 
-add_executable(jog_arm_server node/jog_arm.cpp
+add_executable(jog_arm_server nodes/jog_arm.cpp
     src/jog_arm/jog_arm_server.cpp src/jog_arm/low_pass_filter.cpp src/jog_arm/collision_checker.cpp
     src/jog_arm/jog_calculator.cpp)
 
