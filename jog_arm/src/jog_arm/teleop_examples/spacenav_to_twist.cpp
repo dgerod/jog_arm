@@ -11,8 +11,8 @@ public:
   spaceNavToTwist() : spinner_(1)
   {
     joy_sub_ = n_.subscribe("spacenav/joy", 1, &spaceNavToTwist::joyCallback, this);
-    twist_pub_ = n_.advertise<geometry_msgs::TwistStamped>("jog_arm_server/delta_jog_cmds", 1);
-    joint_delta_pub_ = n_.advertise<jog_msgs::JogJoint>("jog_arm_server/joint_delta_jog_cmds", 1);
+    twist_pub_ = n_.advertise<geometry_msgs::TwistStamped>("jog_arm_server/cartesian_cmd", 1);
+    joint_delta_pub_ = n_.advertise<jog_msgs::JogJoint>("jog_arm_server/joint_cmd", 1);
 
     spinner_.start();
     ros::waitForShutdown();

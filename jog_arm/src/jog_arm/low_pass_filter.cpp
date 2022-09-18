@@ -37,65 +37,40 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef JOG_ARM_SERVER_H
-#define JOG_ARM_SERVER_H
-
-#include <Eigen/Eigenvalues>
-#include <jog_msgs/JogJoint.h>
-#include <moveit/move_group_interface/move_group_interface.h>
-#include <moveit/planning_scene/planning_scene.h>
-#include <moveit/planning_scene_interface/planning_scene_interface.h>
-#include <moveit/robot_model_loader/robot_model_loader.h>
-#include <moveit/robot_state/robot_state.h>
-#include <rosparam_shortcuts/rosparam_shortcuts.h>
-#include <std_msgs/Bool.h>
-#include <std_msgs/Float64MultiArray.h>
-#include <sensor_msgs/JointState.h>
-#include <sensor_msgs/Joy.h>
-#include <trajectory_msgs/JointTrajectory.h>
-#include <tf/transform_listener.h>
-#include <jog_arm/jog_parameters.h>
-#include <jog_arm/shared_variables.h>
 #include <jog_arm/low_pass_filter.h>
-#include <jog_arm/collision_checker.h>
-#include <jog_arm/jog_calculator.h>
 
-namespace jog_arm
+using namespace jog_arm;
+
+LowPassFilter::LowPassFilter(const double low_pass_filter_coeff)
 {
-
-/**
- * Class JogROSInterface - Instantiated in main(). Handles ROS subs & pubs and
- * creates the worker threads.
- */
-class JogROSInterface
-{
-public:
-  JogROSInterface(const std::string& name);
-
-  // Store the parameters that were read from ROS server
-  static struct jog_arm_parameters ros_parameters_;
-
-private:
-  // ROS subscriber callbacks
-  void deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg);
-  void deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg);
-  void jointsCB(const sensor_msgs::JointStateConstPtr& msg);
-
-  bool readParameters(ros::NodeHandle& n);
-
-  // Jogging calculation thread
-  static void* jogCalcThread(void* thread_id);
-  // Collision checking thread
-  static void* CollisionCheckThread(void* thread_id);
-
-  // Variables to share between threads
-  static struct jog_arm_shared shared_variables_;
-  // static robot_model_loader::RobotModelLoader *model_loader_ptr_;
-  static std::unique_ptr<robot_model_loader::RobotModelLoader> model_loader_ptr_;
-
-  const std::string node_name_;
-};
-
+  filter_coeff_ = low_pass_filter_coeff;
 }
 
-#endif
+void LowPassFilter::reset(const double data)
+{
+  prev_msrmts_[0] = data;
+  prev_msrmts_[1] = data;
+  prev_msrmts_[2] = data;
+
+  prev_filtered_msrmts_[0] = data;
+  prev_filtered_msrmts_[1] = data;
+}
+
+double LowPassFilter::filter(const double new_msrmt)
+{
+  // Push in the new measurement
+  prev_msrmts_[2] = prev_msrmts_[1];
+  prev_msrmts_[1] = prev_msrmts_[0];
+  prev_msrmts_[0] = new_msrmt;
+
+  double new_filtered_msrmt = (1 / (1 + filter_coeff_ * filter_coeff_ + 1.414 * filter_coeff_)) *
+                              (prev_msrmts_[2] + 2 * prev_msrmts_[1] + prev_msrmts_[0] -
+                               (filter_coeff_ * filter_coeff_ - 1.414 * filter_coeff_ + 1) * prev_filtered_msrmts_[1] -
+                               (-2 * filter_coeff_ * filter_coeff_ + 2) * prev_filtered_msrmts_[0]);
+
+  // Store the new filtered measurement
+  prev_filtered_msrmts_[1] = prev_filtered_msrmts_[0];
+  prev_filtered_msrmts_[0] = new_filtered_msrmt;
+
+  return new_filtered_msrmt;
+}

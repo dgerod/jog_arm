@@ -16,13 +16,13 @@ find_package(Eigen3 REQUIRED)
 
 catkin_package(
   INCLUDE_DIRS
-    include
+  include
   CATKIN_DEPENDS
-    roscpp
-    moveit_ros_manipulation
-    moveit_ros_move_group
-    moveit_ros_planning_interface
-    tf
+  roscpp
+  moveit_ros_manipulation
+  moveit_ros_move_group
+  moveit_ros_planning_interface
+  tf
 )
 
 include_directories(
@@ -31,7 +31,10 @@ include_directories(
   ${Eigen_INCLUDE_DIRS}
 )
 
-add_executable(jog_arm_server src/jog_arm/jog_arm_server.cpp)
+add_executable(jog_arm_server node/jog_arm.cpp
+    src/jog_arm/jog_arm_server.cpp src/jog_arm/low_pass_filter.cpp src/jog_arm/collision_checker.cpp
+    src/jog_arm/jog_calculator.cpp)
+
 add_dependencies(jog_arm_server ${catkin_EXPORTED_TARGETS})
 target_link_libraries(jog_arm_server ${catkin_LIBRARIES} ${Eigen_LIBRARIES})
 

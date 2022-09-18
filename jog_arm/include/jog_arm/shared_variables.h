@@ -37,63 +37,56 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef JOG_ARM_SERVER_H
-#define JOG_ARM_SERVER_H
+#ifndef JOG_ARM_SHARED_VARIABLES_H
+#define JOG_ARM_SHARED_VARIABLES_H
 
-#include <Eigen/Eigenvalues>
-#include <jog_msgs/JogJoint.h>
-#include <moveit/move_group_interface/move_group_interface.h>
-#include <moveit/planning_scene/planning_scene.h>
-#include <moveit/planning_scene_interface/planning_scene_interface.h>
-#include <moveit/robot_model_loader/robot_model_loader.h>
 #include <moveit/robot_state/robot_state.h>
-#include <rosparam_shortcuts/rosparam_shortcuts.h>
-#include <std_msgs/Bool.h>
 #include <std_msgs/Float64MultiArray.h>
 #include <sensor_msgs/JointState.h>
 #include <sensor_msgs/Joy.h>
+#include <geometry_msgs/TwistStamped.h>
 #include <trajectory_msgs/JointTrajectory.h>
-#include <tf/transform_listener.h>
-#include <jog_arm/jog_parameters.h>
-#include <jog_arm/shared_variables.h>
-#include <jog_arm/low_pass_filter.h>
-#include <jog_arm/collision_checker.h>
-#include <jog_arm/jog_calculator.h>
+#include <jog_msgs/JogJoint.h>
 
 namespace jog_arm
 {
 
-/**
- * Class JogROSInterface - Instantiated in main(). Handles ROS subs & pubs and
- * creates the worker threads.
- */
-class JogROSInterface
+struct jog_arm_shared
 {
-public:
-  JogROSInterface(const std::string& name);
+  geometry_msgs::TwistStamped command_deltas;
+  pthread_mutex_t command_deltas_mutex;
 
-  // Store the parameters that were read from ROS server
-  static struct jog_arm_parameters ros_parameters_;
+  jog_msgs::JogJoint joint_command_deltas;
+  pthread_mutex_t joint_command_deltas_mutex;
 
-private:
-  // ROS subscriber callbacks
-  void deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg);
-  void deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg);
-  void jointsCB(const sensor_msgs::JointStateConstPtr& msg);
+  sensor_msgs::JointState joints;
+  pthread_mutex_t joints_mutex;
 
-  bool readParameters(ros::NodeHandle& n);
+  double collision_velocity_scale = 1;
+  pthread_mutex_t collision_velocity_scale_mutex;
 
-  // Jogging calculation thread
-  static void* jogCalcThread(void* thread_id);
-  // Collision checking thread
-  static void* CollisionCheckThread(void* thread_id);
+  // Indicates that an incoming Cartesian command is all zero velocities
+  bool zero_cartesian_cmd_flag = true;
+  pthread_mutex_t zero_cartesian_cmd_flag_mutex;
 
-  // Variables to share between threads
-  static struct jog_arm_shared shared_variables_;
-  // static robot_model_loader::RobotModelLoader *model_loader_ptr_;
-  static std::unique_ptr<robot_model_loader::RobotModelLoader> model_loader_ptr_;
+  // Indicates that an incoming joint angle command is all zero velocities
+  bool zero_joint_cmd_flag = true;
+  pthread_mutex_t zero_joint_cmd_flag_mutex;
 
-  const std::string node_name_;
+  // Indicates that we have not received a new command in some time
+  bool command_is_stale = false;
+  pthread_mutex_t command_is_stale_mutex;
+
+  // The new trajectory which is calculated
+  trajectory_msgs::JointTrajectory new_traj;
+  pthread_mutex_t new_traj_mutex;
+
+  // Timestamp of incoming commands
+  ros::Time incoming_cmd_stamp = ros::Time(0.);
+  pthread_mutex_t incoming_cmd_stamp_mutex;
+
+  bool ok_to_publish = false;
+  pthread_mutex_t ok_to_publish_mutex;
 };
 
 }
