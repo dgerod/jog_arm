@@ -63,37 +63,25 @@
 namespace jog_arm
 {
 
-/**
- * Class JogROSInterface - Instantiated in main(). Handles ROS subs & pubs and
- * creates the worker threads.
- */
 class JogROSInterface
 {
 public:
   JogROSInterface(const std::string& name);
 
-  // Store the parameters that were read from ROS server
-  static struct jog_arm_parameters ros_parameters_;
-
 private:
-  // ROS subscriber callbacks
   void deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg);
   void deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg);
   void jointsCB(const sensor_msgs::JointStateConstPtr& msg);
 
   bool readParameters(ros::NodeHandle& n);
 
-  // Jogging calculation thread
   static void* jogCalcThread(void* thread_id);
-  // Collision checking thread
   static void* CollisionCheckThread(void* thread_id);
 
-  // Variables to share between threads
+  static std::string node_name_;
+  static struct jog_arm_parameters ros_parameters_;
   static struct jog_arm_shared shared_variables_;
-  // static robot_model_loader::RobotModelLoader *model_loader_ptr_;
   static std::unique_ptr<robot_model_loader::RobotModelLoader> model_loader_ptr_;
-
-  const std::string node_name_;
 };
 
 }

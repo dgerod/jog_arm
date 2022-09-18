@@ -13,8 +13,6 @@ JogCalcs::JogCalcs(const std::string& name, const jog_arm_parameters& parameters
 {
   ROS_INFO("[JogCalcs::JogCalcs] BEGIN");
 
-  parameters_ = parameters;
-
   // Publish collision status
   warning_pub_ = nh_.advertise<std_msgs::Bool>(parameters_.warning_topic, 1);
 
@@ -609,7 +607,7 @@ bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_j
     }
 
     if (!kinematic_state_->satisfiesPositionBounds(joint,
-                                                   -jog_arm::JogROSInterface::ros_parameters_.joint_limit_margin))
+                                                   -parameters_.joint_limit_margin))
     {
       const std::vector<moveit_msgs::JointLimits> limits = joint->getVariableBoundsMsg();
 
@@ -617,13 +615,13 @@ bool JogCalcs::checkIfJointsWithinBounds(trajectory_msgs::JointTrajectory& new_j
       if (limits.size() > 0)
       {
         if ((kinematic_state_->getJointVelocities(joint)[0] < 0 &&
-             (joint_angle < (limits[0].min_position + jog_arm::JogROSInterface::ros_parameters_.joint_limit_margin))) ||
+             (joint_angle < (limits[0].min_position + parameters_.joint_limit_margin))) ||
             (kinematic_state_->getJointVelocities(joint)[0] > 0 &&
-             (joint_angle > (limits[0].max_position - jog_arm::JogROSInterface::ros_parameters_.joint_limit_margin))))
+             (joint_angle > (limits[0].max_position - parameters_.joint_limit_margin))))
         {
           ROS_WARN_STREAM_THROTTLE_NAMED(2, node_name_, ros::this_node::getName() << " " << joint->getName()
-                                                                                 << " close to a "
-                                                                                    " position limit. Halting.");
+                                                                                  << " close to a "
+                                                                                     " position limit. Halting.");
           halting = true;
         }
       }

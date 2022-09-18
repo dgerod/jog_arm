@@ -40,10 +40,14 @@
 #include <jog_arm/jog_arm_server.h>
 
 #include <memory>
+#include <string>
 #include <jog_arm/jog_calculator.h>
+
+using namespace jog_arm;
 
 // Initialize these static struct to hold ROS parameters.
 // They must be static because they are used as arguments in thread creation.
+std::string jog_arm::JogROSInterface::node_name_ = "";
 jog_arm::jog_arm_parameters jog_arm::JogROSInterface::ros_parameters_;
 jog_arm::jog_arm_shared jog_arm::JogROSInterface::shared_variables_;
 std::unique_ptr<robot_model_loader::RobotModelLoader> jog_arm::JogROSInterface::model_loader_ptr_ = NULL;
@@ -55,14 +59,12 @@ std::unique_ptr<robot_model_loader::RobotModelLoader> jog_arm::JogROSInterface::
 // Another worker thread does collision checking.
 /////////////////////////////////////////////////////////////////////////////////
 
-using namespace jog_arm;
-
 JogROSInterface::JogROSInterface(const std::string& name)
-    : node_name_(name)
 {
   ROS_INFO("[JogROSInterface::JogROSInterface] BEGIN");
 
   ros::NodeHandle n;
+  node_name_ = name;
 
   // Read ROS parameters, typically from YAML file
   if (!readParameters(n))
@@ -175,92 +177,6 @@ JogROSInterface::JogROSInterface(const std::string& name)
 
   (void)pthread_join(joggingThread, nullptr);
   (void)pthread_join(collisionThread, nullptr);
-}
-
-// A separate thread for the heavy jogging calculations.
-void* JogROSInterface::jogCalcThread(void*)
-{
-  ROS_INFO("JogROSInterface::jogCalcThread");
-  jog_arm::JogCalcs ja("pass_node_name_", ros_parameters_, shared_variables_, model_loader_ptr_);
-  return nullptr;
-}
-
-// A separate thread for collision checking.
-void* JogROSInterface::CollisionCheckThread(void*)
-{
-  ROS_INFO("JogROSInterface::CollisionCheckThread");
-  jog_arm::CollisionCheckThread cc("pass_node_name_", ros_parameters_, shared_variables_, model_loader_ptr_);
-  return nullptr;
-}
-
-// Listen to cartesian delta commands.
-// Store them in a shared variable.
-void JogROSInterface::deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg)
-{
-  ROS_INFO("[JogROSInterface::deltaCartesianCmdCB] BEGIN" );
-
-  pthread_mutex_lock(&shared_variables_.command_deltas_mutex);
-
-  // Copy everything but the frame name. The frame name is set by yaml file at startup.
-  // (so it isn't copied over and over)
-  shared_variables_.command_deltas.twist = msg->twist;
-  shared_variables_.command_deltas.header.stamp = msg->header.stamp;
-
-  // Check if input is all zeros. Flag it if so to skip calculations/publication
-  pthread_mutex_lock(&shared_variables_.zero_cartesian_cmd_flag_mutex);
-  shared_variables_.zero_cartesian_cmd_flag = shared_variables_.command_deltas.twist.linear.x == 0.0 &&
-                                              shared_variables_.command_deltas.twist.linear.y == 0.0 &&
-                                              shared_variables_.command_deltas.twist.linear.z == 0.0 &&
-                                              shared_variables_.command_deltas.twist.angular.x == 0.0 &&
-                                              shared_variables_.command_deltas.twist.angular.y == 0.0 &&
-                                              shared_variables_.command_deltas.twist.angular.z == 0.0;
-  pthread_mutex_unlock(&shared_variables_.zero_cartesian_cmd_flag_mutex);
-
-  pthread_mutex_unlock(&shared_variables_.command_deltas_mutex);
-
-  pthread_mutex_lock(&shared_variables_.incoming_cmd_stamp_mutex);
-  shared_variables_.incoming_cmd_stamp = msg->header.stamp;
-  pthread_mutex_unlock(&shared_variables_.incoming_cmd_stamp_mutex);
-
-  ROS_INFO("[JogROSInterface::deltaCartesianCmdCB] END" );
-}
-
-// Listen to joint delta commands.
-// Store them in a shared variable.
-void JogROSInterface::deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg)
-{
-  ROS_INFO("[JogROSInterface::deltaJointCmdCB] BEGIN");
-
-  pthread_mutex_lock(&shared_variables_.joint_command_deltas_mutex);
-  shared_variables_.joint_command_deltas = *msg;
-
-  // Check if joint inputs is all zeros. Flag it if so to skip
-  // calculations/publication
-  bool all_zeros = true;
-  for (double delta : shared_variables_.joint_command_deltas.deltas)
-  {
-    all_zeros &= (delta == 0.0);
-  };
-  pthread_mutex_unlock(&shared_variables_.joint_command_deltas_mutex);
-
-  pthread_mutex_lock(&shared_variables_.zero_joint_cmd_flag_mutex);
-  shared_variables_.zero_joint_cmd_flag = all_zeros;
-  pthread_mutex_unlock(&shared_variables_.zero_joint_cmd_flag_mutex);
-
-  pthread_mutex_lock(&shared_variables_.incoming_cmd_stamp_mutex);
-  shared_variables_.incoming_cmd_stamp = msg->header.stamp;
-  pthread_mutex_unlock(&shared_variables_.incoming_cmd_stamp_mutex);
-
-  ROS_INFO("[JogROSInterface::deltaJointCmdCB] END");
-}
-
-// Listen to joint angles.
-// Store them in a shared variable.
-void JogROSInterface::jointsCB(const sensor_msgs::JointStateConstPtr& msg)
-{
-  pthread_mutex_lock(&shared_variables_.joints_mutex);
-  shared_variables_.joints = *msg;
-  pthread_mutex_unlock(&shared_variables_.joints_mutex);
 }
 
 // Read ROS parameters, typically from YAML file
@@ -408,4 +324,90 @@ bool JogROSInterface::readParameters(ros::NodeHandle& n)
   }
 
   return 1;
+}
+
+// A separate thread for the heavy jogging calculations.
+void* JogROSInterface::jogCalcThread(void*)
+{
+  ROS_INFO("JogROSInterface::jogCalcThread");
+  jog_arm::JogCalcs ja(node_name_, ros_parameters_, shared_variables_, model_loader_ptr_);
+  return nullptr;
+}
+
+// A separate thread for collision checking.
+void* JogROSInterface::CollisionCheckThread(void*)
+{
+  ROS_INFO("JogROSInterface::CollisionCheckThread");
+  jog_arm::CollisionCheckThread cc(node_name_, ros_parameters_, shared_variables_, model_loader_ptr_);
+  return nullptr;
+}
+
+// Listen to cartesian delta commands.
+// Store them in a shared variable.
+void JogROSInterface::deltaCartesianCmdCB(const geometry_msgs::TwistStampedConstPtr& msg)
+{
+  ROS_INFO("[JogROSInterface::deltaCartesianCmdCB] BEGIN" );
+
+  pthread_mutex_lock(&shared_variables_.command_deltas_mutex);
+
+  // Copy everything but the frame name. The frame name is set by yaml file at startup.
+  // (so it isn't copied over and over)
+  shared_variables_.command_deltas.twist = msg->twist;
+  shared_variables_.command_deltas.header.stamp = msg->header.stamp;
+
+  // Check if input is all zeros. Flag it if so to skip calculations/publication
+  pthread_mutex_lock(&shared_variables_.zero_cartesian_cmd_flag_mutex);
+  shared_variables_.zero_cartesian_cmd_flag = shared_variables_.command_deltas.twist.linear.x == 0.0 &&
+                                              shared_variables_.command_deltas.twist.linear.y == 0.0 &&
+                                              shared_variables_.command_deltas.twist.linear.z == 0.0 &&
+                                              shared_variables_.command_deltas.twist.angular.x == 0.0 &&
+                                              shared_variables_.command_deltas.twist.angular.y == 0.0 &&
+                                              shared_variables_.command_deltas.twist.angular.z == 0.0;
+  pthread_mutex_unlock(&shared_variables_.zero_cartesian_cmd_flag_mutex);
+
+  pthread_mutex_unlock(&shared_variables_.command_deltas_mutex);
+
+  pthread_mutex_lock(&shared_variables_.incoming_cmd_stamp_mutex);
+  shared_variables_.incoming_cmd_stamp = msg->header.stamp;
+  pthread_mutex_unlock(&shared_variables_.incoming_cmd_stamp_mutex);
+
+  ROS_INFO("[JogROSInterface::deltaCartesianCmdCB] END" );
+}
+
+// Listen to joint delta commands.
+// Store them in a shared variable.
+void JogROSInterface::deltaJointCmdCB(const jog_msgs::JogJointConstPtr& msg)
+{
+  ROS_INFO("[JogROSInterface::deltaJointCmdCB] BEGIN");
+
+  pthread_mutex_lock(&shared_variables_.joint_command_deltas_mutex);
+  shared_variables_.joint_command_deltas = *msg;
+
+  // Check if joint inputs is all zeros. Flag it if so to skip
+  // calculations/publication
+  bool all_zeros = true;
+  for (double delta : shared_variables_.joint_command_deltas.deltas)
+  {
+    all_zeros &= (delta == 0.0);
+  };
+  pthread_mutex_unlock(&shared_variables_.joint_command_deltas_mutex);
+
+  pthread_mutex_lock(&shared_variables_.zero_joint_cmd_flag_mutex);
+  shared_variables_.zero_joint_cmd_flag = all_zeros;
+  pthread_mutex_unlock(&shared_variables_.zero_joint_cmd_flag_mutex);
+
+  pthread_mutex_lock(&shared_variables_.incoming_cmd_stamp_mutex);
+  shared_variables_.incoming_cmd_stamp = msg->header.stamp;
+  pthread_mutex_unlock(&shared_variables_.incoming_cmd_stamp_mutex);
+
+  ROS_INFO("[JogROSInterface::deltaJointCmdCB] END");
+}
+
+// Listen to joint angles.
+// Store them in a shared variable.
+void JogROSInterface::jointsCB(const sensor_msgs::JointStateConstPtr& msg)
+{
+  pthread_mutex_lock(&shared_variables_.joints_mutex);
+  shared_variables_.joints = *msg;
+  pthread_mutex_unlock(&shared_variables_.joints_mutex);
 }
